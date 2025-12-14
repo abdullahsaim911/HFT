@@ -9,7 +9,7 @@ import time
 import logging
 from typing import List, Dict, Optional, Generator
 from datetime import datetime
-from engine_core import MarketData
+from engine.engine_core import MarketData
 import asyncio
 
 logger = logging.getLogger(__name__)

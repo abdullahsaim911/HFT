@@ -7,7 +7,7 @@ All strategies are independent and can be combined on same/different coins.
 from typing import Optional, Tuple
 from collections import deque
 import logging
-from engine_core import Strategy, MarketData
+from .engine_core import Strategy, MarketData
 
 logger = logging.getLogger(__name__)
 

@@ -6,9 +6,10 @@ interface CardProps {
   variant?: 'default' | 'active' | 'error';
   hover?: boolean;
   onClick?: () => void;
+  style?: React.CSSProperties;
 }
 
-export function Card({ children, className = '', variant = 'default', hover = false, onClick }: CardProps) {
+export function Card({ children, className = '', variant = 'default', hover = false, onClick, style }: CardProps) {
   const baseClasses = 'rounded-xl p-5 transition-all duration-200';
   
   const variantClasses = {
@@ -23,6 +24,7 @@ export function Card({ children, className = '', variant = 'default', hover = fa
     <div 
       className={`${baseClasses} ${variantClasses[variant]} ${hoverClasses} ${className}`}
       onClick={onClick}
+      style={style}
     >
       {children}
     </div>

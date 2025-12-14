@@ -1,8 +1,9 @@
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+export const API_ROOT = `${API_BASE}/api`;
 
 export async function fetchInitialMetrics() {
   try {
-    const res = await fetch(`${API_BASE}/metrics`);
+    const res = await fetch(`${API_ROOT}/metrics`);
     if (!res.ok) throw new Error('Failed to fetch metrics');
     return await res.json();
   } catch (err) {
@@ -13,7 +14,7 @@ export async function fetchInitialMetrics() {
 
 export async function fetchInitialTrades() {
   try {
-    const res = await fetch(`${API_BASE}/trades`);
+    const res = await fetch(`${API_ROOT}/trades`);
     if (!res.ok) throw new Error('Failed to fetch trades');
     return await res.json();
   } catch (err) {

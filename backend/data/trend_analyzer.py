@@ -15,7 +15,7 @@ from collections import deque
 from enum import Enum
 import statistics
 
-from engine_core import MarketData
+from engine.engine_core import MarketData
 from data.crypto_data_provider import CSVDataLoader
 
 logger = logging.getLogger(__name__)

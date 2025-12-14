@@ -53,8 +53,26 @@
       target: 'esnext',
       outDir: 'build',
     },
+    // vite.config.js (Update the server part only)
+
     server: {
       port: 3000,
       open: true,
+      proxy: {
+        // Proxy for standard API calls
+        '/api': {
+          target: 'http://127.0.0.1:8000',
+          changeOrigin: true,
+          secure: false,
+        },
+        // NEW: Proxy for WebSockets (Crucial for "Connected" status)
+        '/ws': {
+          target: 'ws://127.0.0.1:8000',
+          ws: true,
+          changeOrigin: true,
+        },
+      },
     },
   });
+  
+  

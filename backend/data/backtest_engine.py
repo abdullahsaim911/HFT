@@ -17,7 +17,7 @@ from datetime import datetime
 import json
 from collections import defaultdict
 
-from engine_core import HFTEngine, EngineMode, MarketData, Strategy
+from engine.engine_core import HFTEngine, EngineMode, MarketData, Strategy
 from strategies import create_strategy, AVAILABLE_STRATEGIES
 from data.crypto_data_provider import CSVDataLoader
 
@@ -171,7 +171,7 @@ class BacktestEngine:
                     if strategy.coin == market_data_point.coin:
                         action_result = strategy.execute(market_data_point)
                         if action_result:
-                            from engine_core import Trade
+                            from engine.engine_core import Trade
                             action, quantity = action_result
                             trade = Trade(
                                 coin=market_data_point.coin,

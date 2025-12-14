@@ -17,7 +17,8 @@ Architecture:
 """
 
 import multiprocessing as mp
-from multiprocessing import Manager, Lock, Queue, ProcessPoolExecutor
+from multiprocessing import Manager, Lock, Queue
+from concurrent.futures import ProcessPoolExecutor
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional, Tuple, Set
 from dataclasses import dataclass, asdict, field
