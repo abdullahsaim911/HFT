@@ -18,7 +18,7 @@ import json
 from collections import defaultdict
 
 from engine.engine_core import HFTEngine, EngineMode, MarketData, Strategy
-from strategies import create_strategy, AVAILABLE_STRATEGIES
+from engine.strategies import create_strategy, AVAILABLE_STRATEGIES
 from data.crypto_data_provider import CSVDataLoader
 
 logger = logging.getLogger(__name__)

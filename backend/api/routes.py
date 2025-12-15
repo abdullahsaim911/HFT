@@ -12,7 +12,7 @@ import os
 
 from data.backtest_engine import BacktestEngine
 from data.trend_analyzer import TrendAnalysisService
-from strategies import AVAILABLE_STRATEGIES
+from engine.strategies import AVAILABLE_STRATEGIES
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +363,7 @@ async def validate_strategy_config(
         )
     
     try:
-        from strategies import create_strategy
+        from engine.strategies import create_strategy
         strategy = create_strategy(strategy_name, "TEST", **params)
         
         if strategy is None:

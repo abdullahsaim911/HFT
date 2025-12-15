@@ -3,11 +3,11 @@ import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { StatusDot } from '../ui/StatusDot';
-import { ArrowUp, ArrowDown, TrendingUp, Eye, Pause, Square } from 'lucide-react';
+import { ArrowUp, ArrowDown, TrendingUp, Eye, Pause, Square, Download, Book } from 'lucide-react';
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { generateLiveTradeData, generatePortfolioData, generatePnlBreakdown } from '../../utils/mockData';
 import { useWebSocket } from '../../hooks/useWebSocket';
-import { fetchInitialMetrics, fetchInitialTrades, startEngine, stopEngine, registerStrategy, unregisterStrategy, fetchTrades, getStrategyMetrics } from '../../api/apiClient';
+import { fetchInitialMetrics, fetchInitialTrades, startEngine, stopEngine, registerStrategy, unregisterStrategy, fetchTrades, getStrategyMetrics, getOrderBook, exportOrderBook, getLatencyReport } from '../../api/apiClient';
 
 export function LiveTradingDashboard() {
   const [liveData, setLiveData] = useState(generateLiveTradeData());
@@ -25,6 +25,13 @@ export function LiveTradingDashboard() {
   const [exporting, setExporting] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [detailData, setDetailData] = useState<any>(null);
+  const [orderBookModalOpen, setOrderBookModalOpen] = useState(false);
+  const [orderBook, setOrderBook] = useState<any[]>([]);
+  const [latencyReport, setLatencyReport] = useState<any>(null);
+  const [configModalOpen, setConfigModalOpen] = useState(false);
+  const [configData, setConfigData] = useState<any>(null);
+  const [timelineRange, setTimelineRange] = useState('24h');
+  const [selectedStrategy, setSelectedStrategy] = useState('all');
   
   // Fetch initial snapshot from API if available
   useEffect(() => {
@@ -33,26 +40,43 @@ export function LiveTradingDashboard() {
       try {
         const metrics = await fetchInitialMetrics();
         if (metrics && mounted) {
-          if (metrics.portfolioValue) setPortfolioValue(metrics.portfolioValue);
-          if (metrics.portfolioChange) setPortfolioChange(metrics.portfolioChange);
-          if (metrics.totalPnl) setTotalPnl(metrics.totalPnl);
-          if (metrics.totalPnlPercent) setTotalPnlPercent(metrics.totalPnlPercent);
-          if (metrics.portfolioData) setPortfolioData(metrics.portfolioData);
-          if (metrics.pnlBreakdown) setPnlBreakdown(metrics.pnlBreakdown.map((p:any, i:number)=> ({...p, color: p.color || ['#00d4ff','#00ff41','#0080ff','#ff0055'][i%4]})));
+          // Global metrics
+          if (metrics.global) {
+            const g = metrics.global;
+            if (g.portfolioValue) setPortfolioValue(g.portfolioValue);
+            if (g.portfolioChange) setPortfolioChange(g.portfolioChange);
+            if (g.totalPnl) setTotalPnl(g.totalPnl);
+            if (g.totalPnlPercent) setTotalPnlPercent(g.totalPnlPercent);
+          }
           
-          // Populate live strategy table from API metrics
+          // System metrics
+          if (metrics.system) {
+            setLatency(metrics.system.latency_ms || 2.3);
+            setProcessCount(metrics.system.process_count || 4);
+            setQueueSize(metrics.system.queue_size || 0);
+          }
+          
+          // Convert strategies to table rows
           if (metrics.strategies) {
-            const strategyEntries = Object.entries(metrics.strategies as any);
-            const tableData = strategyEntries.map(([k, v]: any) => ({
-              coin: v.coin || k.split('_')[0],
-              strategy: k,
-              currentPrice: v.current_price || v.price || 0,
-              pnl24h: v.pnl || 0,
-              return24h: v.return_pct || 0,
-              status: v.status || 'ACTIVE',
-              trades24h: v.trades || 0
+            const strategyArray = Object.entries(metrics.strategies).map(([strategyId, strat]: [string, any]) => ({
+              coin: strat.coin || strategyId.split('_')[0],
+              strategy: strategyId,
+              currentPrice: strat.current_price || strat.price || 0,
+              pnl24h: strat.pnl || 0,
+              return24h: strat.return_pct || 0,
+              status: strat.status || 'ACTIVE',
+              trades24h: strat.trades || 0
             }));
-            if (tableData.length) setLiveData(tableData);
+            if (strategyArray.length > 0) setLiveData(strategyArray);
+          }
+          
+          // Portfolio history for chart
+          if (metrics.portfolio_history && metrics.portfolio_history.length > 0) {
+            const chartData = metrics.portfolio_history.map((p: any) => ({
+              time: p.time || new Date(p.timestamp).toLocaleTimeString(),
+              value: p.value
+            }));
+            setPortfolioData(chartData);
           }
         }
       } catch (e) { console.error('Failed to fetch initial metrics:', e); }
@@ -99,7 +123,7 @@ export function LiveTradingDashboard() {
         } catch (e) { /* ignore */ }
       }
       
-      // Portfolio history for chart
+      // Portfolio history for chart - update in real-time
       if (payload.portfolio_history && payload.portfolio_history.length > 0) {
         const chartData = payload.portfolio_history.map((p: any) => ({
           time: p.time || new Date(p.timestamp).toLocaleTimeString(),
@@ -108,12 +132,36 @@ export function LiveTradingDashboard() {
         if (chartData.length > 0) setPortfolioData(chartData);
       }
 
-      if (payload.pnlBreakdown) setPnlBreakdown(payload.pnlBreakdown);
+      // P&L Breakdown by coin for pie chart - convert from dict to array with colors
+      if (payload.pnlBreakdown) {
+        const breakdownDict = payload.pnlBreakdown;
+        const colors = {
+          'BTC': '#FFD700',
+          'ETH': '#627EEA',
+          'BNB': '#F3BA2F',
+          'DOGE': '#C99D00',
+          'ADA': '#0033FF',
+          'LTC': '#345D9D',
+          'XRP': '#23292F'
+        };
+        
+        const breakdownArray = Object.entries(breakdownDict).map(([coin, pnl]: [string, any]) => ({
+          name: coin,
+          value: Math.abs(pnl), // Use absolute value for pie chart sizing
+          color: colors[coin as keyof typeof colors] || '#00d4ff',
+          pnl: pnl // Keep original for reference
+        }));
+        
+        if (breakdownArray.length > 0) {
+          setPnlBreakdown(breakdownArray);
+        }
+      }
     }
 
     if (data.type === 'trade' || data.type === 'trade_event') {
       const t = data.trade || data.payload;
       if (!t) return;
+      // Update the specific row in live data when a trade occurs
       setLiveData(prev => {
         const idx = prev.findIndex(p => p.coin === t.coin && p.strategy === (t.strategy || `${t.coin}_strategy`));
         if (idx === -1) return prev;
@@ -218,6 +266,57 @@ export function LiveTradingDashboard() {
     } catch (e) { console.error(e); }
   };
 
+  const openOrderBook = async () => {
+    try {
+      const data = await getOrderBook(100);
+      if (data?.order_book) {
+        setOrderBook(data.order_book);
+      }
+      const report = await getLatencyReport();
+      if (report) {
+        setLatencyReport(report);
+      }
+      setOrderBookModalOpen(true);
+    } catch (e) { console.error(e); }
+  };
+
+  const handleExportOrderBook = async () => {
+    try {
+      await exportOrderBook();
+    } catch (e) { console.error(e); }
+  };
+
+  const openStrategyConfig = (strategyName?: string) => {
+    setConfigData({
+      name: strategyName || 'SMA_Crossover',
+      params: {
+        fast_period: 10,
+        slow_period: 30,
+        stop_loss: 2.5,
+        take_profit: 5.0
+      }
+    });
+    setConfigModalOpen(true);
+  };
+
+  const saveStrategyConfig = async () => {
+    try {
+      // In real implementation, save to backend
+      console.log('Saving config:', configData);
+      setConfigModalOpen(false);
+    } catch (e) { console.error(e); }
+  };
+
+  const handleTimelineChange = (range: string) => {
+    setTimelineRange(range);
+    // In real implementation, fetch filtered data based on timeline
+  };
+
+  const filterLiveDataByStrategy = () => {
+    if (selectedStrategy === 'all') return liveData;
+    return liveData.filter(d => d.strategy.includes(selectedStrategy));
+  };
+
   return (
     <div className="space-y-6">
       {/* Hero Metrics */}
@@ -288,9 +387,22 @@ export function LiveTradingDashboard() {
       {/* Live Trading Table */}
       <Card>
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl">Live Trading Activity</h2>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl">Live Trading Activity</h2>
+              <select 
+                value={selectedStrategy} 
+                onChange={(e) => setSelectedStrategy(e.target.value)}
+                className="px-3 py-2 bg-[#1a1a1a] border border-[#2a2a2a] text-[#00d4ff] rounded text-sm"
+              >
+                <option value="all">All Strategies</option>
+                <option value="SMA_Crossover">SMA Crossover</option>
+                <option value="Momentum">Momentum</option>
+                <option value="RSI">RSI</option>
+              </select>
+            </div>
             <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => openStrategyConfig()}>Configure Strategy</Button>
               <Button size="sm" variant="outline">Filter</Button>
               <Button size="sm" variant="outline">Search</Button>
             </div>
@@ -311,7 +423,7 @@ export function LiveTradingDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {liveData.map((item, idx) => (
+                {filterLiveDataByStrategy().map((item, idx) => (
                   <tr 
                     key={idx} 
                     className="border-b border-[#2a2a2a] hover:bg-[#1a1a1a] transition-colors group"
@@ -361,10 +473,24 @@ export function LiveTradingDashboard() {
         </div>
       </Card>
       
-      {/* Charts Section */}
+      {/* Charts Section with Timeline & Filter */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
-          <h3 className="text-lg mb-4">24h Portfolio Value</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg">Portfolio Value</h3>
+            <div className="flex gap-2">
+              {['1h', '4h', '24h', '7d', '30d'].map(range => (
+                <Button
+                  key={range}
+                  size="sm"
+                  variant={timelineRange === range ? 'primary' : 'outline'}
+                  onClick={() => handleTimelineChange(range)}
+                >
+                  {range}
+                </Button>
+              ))}
+            </div>
+          </div>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={portfolioData}>
               <XAxis dataKey="time" stroke="#808080" style={{ fontSize: '12px' }} />
@@ -425,7 +551,83 @@ export function LiveTradingDashboard() {
         <Button variant="outline" size="lg" onClick={handleExportTrades} disabled={exporting}>
           {exporting ? 'Exporting...' : 'Export Trades CSV'}
         </Button>
+        <Button variant="outline" size="lg" onClick={openOrderBook}>
+          <Book className="w-5 h-5 mr-2" />
+          View Order Book
+        </Button>
       </div>
+      
+      {/* Order Book Modal */}
+      {orderBookModalOpen && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-4xl max-h-96 overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl">Order Book</h2>
+              <button onClick={() => setOrderBookModalOpen(false)} className="text-[#808080] hover:text-[#00d4ff]">✕</button>
+            </div>
+            
+            {/* Latency Report Summary */}
+            {latencyReport && (
+              <div className="grid grid-cols-4 gap-4 mb-4 pb-4 border-b border-[#2a2a2a]">
+                <div>
+                  <div className="text-sm text-[#808080]">Avg Latency</div>
+                  <div className="text-lg text-[#00ff41]">{latencyReport.avg_latency_ms.toFixed(2)}ms</div>
+                </div>
+                <div>
+                  <div className="text-sm text-[#808080]">Min Latency</div>
+                  <div className="text-lg text-[#00d4ff]">{latencyReport.min_latency_ms.toFixed(2)}ms</div>
+                </div>
+                <div>
+                  <div className="text-sm text-[#808080]">Max Latency</div>
+                  <div className="text-lg text-[#ff0055]">{latencyReport.max_latency_ms.toFixed(2)}ms</div>
+                </div>
+                <div>
+                  <div className="text-sm text-[#808080]">Total Trades</div>
+                  <div className="text-lg text-[#00d4ff]">{latencyReport.total_trades}</div>
+                </div>
+              </div>
+            )}
+            
+            {/* Order Book Table */}
+            <div className="overflow-x-auto mb-4">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#2a2a2a]">
+                    <th className="text-left py-2 px-2 text-[#00d4ff]">Order ID</th>
+                    <th className="text-left py-2 px-2 text-[#00d4ff]">Coin</th>
+                    <th className="text-left py-2 px-2 text-[#00d4ff]">Type</th>
+                    <th className="text-right py-2 px-2 text-[#00d4ff]">Price</th>
+                    <th className="text-right py-2 px-2 text-[#00d4ff]">Qty</th>
+                    <th className="text-right py-2 px-2 text-[#00d4ff]">Latency (ms)</th>
+                    <th className="text-left py-2 px-2 text-[#00d4ff]">Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderBook.map((order: any) => (
+                    <tr key={order.order_id} className="border-b border-[#2a2a2a]">
+                      <td className="py-2 px-2 text-[#00d4ff]">{order.order_id}</td>
+                      <td className="py-2 px-2">{order.coin}</td>
+                      <td className={`py-2 px-2 ${order.type === 'BUY' ? 'text-[#00ff41]' : 'text-[#ff0055]'}`}>{order.type}</td>
+                      <td className="py-2 px-2 text-right text-[#808080]">${order.price.toFixed(2)}</td>
+                      <td className="py-2 px-2 text-right text-[#808080]">{order.quantity.toFixed(6)}</td>
+                      <td className="py-2 px-2 text-right text-[#00ff41]">{order.decision_time_ms?.toFixed(2) || 'N/A'}</td>
+                      <td className="py-2 px-2 text-[#808080] text-xs">{new Date(order.timestamp).toLocaleTimeString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            
+            <div className="flex gap-2">
+              <Button variant="primary" onClick={handleExportOrderBook}>
+                <Download className="w-4 h-4 mr-2" />
+                Export Order Book CSV
+              </Button>
+              <Button variant="outline" onClick={() => setOrderBookModalOpen(false)}>Close</Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

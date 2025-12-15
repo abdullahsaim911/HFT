@@ -170,3 +170,46 @@ export async function fetchTrades(strategyId?: string, limit: number = 100) {
   }
 }
 
+export async function getOrderBook(limit: number = 100) {
+  try {
+    const res = await fetch(`${API_ROOT}/order-book?limit=${limit}`);
+    if (!res.ok) throw new Error('Failed to fetch order book');
+    return await res.json();
+  } catch (err) {
+    console.error('getOrderBook error', err);
+    return null;
+  }
+}
+
+export async function exportOrderBook() {
+  try {
+    const res = await fetch(`${API_ROOT}/order-book/export`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to export order book');
+    
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'order_book.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return { status: 'success' };
+  } catch (err) {
+    console.error('exportOrderBook error', err);
+    return null;
+  }
+}
+
+export async function getLatencyReport() {
+  try {
+    const res = await fetch(`${API_ROOT}/latency-report`);
+    if (!res.ok) throw new Error('Failed to fetch latency report');
+    return await res.json();
+  } catch (err) {
+    console.error('getLatencyReport error', err);
+    return null;
+  }
+}
+
