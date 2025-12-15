@@ -7,7 +7,7 @@ import { ArrowUp, ArrowDown, TrendingUp, Eye, Pause, Square } from 'lucide-react
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { generateLiveTradeData, generatePortfolioData, generatePnlBreakdown } from '../../utils/mockData';
 import { useWebSocket } from '../../hooks/useWebSocket';
-import { fetchInitialMetrics, fetchInitialTrades } from '../../api/apiClient';
+import { fetchInitialMetrics, fetchInitialTrades, startEngine, stopEngine, registerStrategy, unregisterStrategy, fetchTrades, getStrategyMetrics } from '../../api/apiClient';
 
 export function LiveTradingDashboard() {
   const [liveData, setLiveData] = useState(generateLiveTradeData());
@@ -17,6 +17,14 @@ export function LiveTradingDashboard() {
   const [portfolioChange, setPortfolioChange] = useState(3.2);
   const [totalPnl, setTotalPnl] = useState(5432.10);
   const [totalPnlPercent, setTotalPnlPercent] = useState(4.2);
+  const [latency, setLatency] = useState(2.3);
+  const [processCount, setProcessCount] = useState(4);
+  const [queueSize, setQueueSize] = useState(0);
+  const [loadingStart, setLoadingStart] = useState(false);
+  const [loadingPause, setLoadingPause] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [detailData, setDetailData] = useState<any>(null);
   
   // Fetch initial snapshot from API if available
   useEffect(() => {
@@ -31,8 +39,23 @@ export function LiveTradingDashboard() {
           if (metrics.totalPnlPercent) setTotalPnlPercent(metrics.totalPnlPercent);
           if (metrics.portfolioData) setPortfolioData(metrics.portfolioData);
           if (metrics.pnlBreakdown) setPnlBreakdown(metrics.pnlBreakdown.map((p:any, i:number)=> ({...p, color: p.color || ['#00d4ff','#00ff41','#0080ff','#ff0055'][i%4]})));
+          
+          // Populate live strategy table from API metrics
+          if (metrics.strategies) {
+            const strategyEntries = Object.entries(metrics.strategies as any);
+            const tableData = strategyEntries.map(([k, v]: any) => ({
+              coin: v.coin || k.split('_')[0],
+              strategy: k,
+              currentPrice: v.current_price || v.price || 0,
+              pnl24h: v.pnl || 0,
+              return24h: v.return_pct || 0,
+              status: v.status || 'ACTIVE',
+              trades24h: v.trades || 0
+            }));
+            if (tableData.length) setLiveData(tableData);
+          }
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) { console.error('Failed to fetch initial metrics:', e); }
     })();
     return () => { mounted = false; };
   }, []);
@@ -42,7 +65,7 @@ export function LiveTradingDashboard() {
     if (!data) return;
     // backend uses type: "metrics" and "trade"
     if (data.type === 'metrics' || data.type === 'live_update') {
-      const payload = data.type === 'metrics' ? { ...data } : data.payload;
+      const payload = data;
       // metrics -> global and strategies
       if (payload.global) {
         const g = payload.global;
@@ -50,6 +73,13 @@ export function LiveTradingDashboard() {
         if (g.portfolioChange) setPortfolioChange(g.portfolioChange);
         if (g.totalPnl) setTotalPnl(g.totalPnl);
         if (g.totalPnlPercent) setTotalPnlPercent(g.totalPnlPercent);
+      }
+      
+      // System metrics
+      if (payload.system) {
+        setLatency(payload.system.latency_ms || 2.3);
+        setProcessCount(payload.system.process_count || 4);
+        setQueueSize(payload.system.queue_size || 0);
       }
 
       if (payload.strategies) {
@@ -68,8 +98,16 @@ export function LiveTradingDashboard() {
           if (updated.length) setLiveData(updated);
         } catch (e) { /* ignore */ }
       }
+      
+      // Portfolio history for chart
+      if (payload.portfolio_history && payload.portfolio_history.length > 0) {
+        const chartData = payload.portfolio_history.map((p: any) => ({
+          time: p.time || new Date(p.timestamp).toLocaleTimeString(),
+          value: p.value
+        }));
+        if (chartData.length > 0) setPortfolioData(chartData);
+      }
 
-      if (payload.portfolioData) setPortfolioData(payload.portfolioData);
       if (payload.pnlBreakdown) setPnlBreakdown(payload.pnlBreakdown);
     }
 
@@ -91,8 +129,95 @@ export function LiveTradingDashboard() {
   useWebSocket(WS_URL, handleWsMessage);
   
   const activeStrategies = liveData.filter(d => d.status === 'ACTIVE').length;
-  const latency = 2.3;
-  
+
+  const handleStartAll = async () => {
+    setLoadingStart(true);
+    try {
+      const res = await startEngine({ data_source: 'synthetic', coins: 'BTC,ETH', interval: 1 });
+      if (res) {
+        // optimistic UI update
+        setLiveData(prev => prev.map(p => ({ ...p, status: 'ACTIVE' })));
+      }
+    } catch (e) { console.error(e); }
+    setLoadingStart(false);
+  };
+
+  const handlePauseAll = async () => {
+    setLoadingPause(true);
+    try {
+      const res = await stopEngine();
+      if (res) {
+        setLiveData(prev => prev.map(p => ({ ...p, status: 'PAUSED' })));
+      }
+    } catch (e) { console.error(e); }
+    setLoadingPause(false);
+  };
+
+  const handleExportTrades = async () => {
+    setExporting(true);
+    try {
+      const data = await fetchInitialTrades();
+      const trades = data?.trades || data || [];
+      // convert to CSV
+      const headers = trades.length ? Object.keys(trades[0]) : [];
+      const csv = [headers.join(',')].concat(trades.map((t:any) => headers.map(h => JSON.stringify(t[h] ?? '')).join(','))).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'trades_export.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { console.error(e); }
+    setExporting(false);
+  };
+
+  const openStrategyDetails = async (strategyId:string) => {
+    try {
+      const metrics = await getStrategyMetrics(strategyId);
+      const tradesRes = await fetchTrades(strategyId, 200);
+      setDetailData({ metrics, trades: tradesRes?.trades || tradesRes || [] });
+      setDetailModalOpen(true);
+    } catch (e) { console.error(e); }
+  };
+
+  const toggleStrategy = async (item:any) => {
+    // if active -> unregister, else register
+    const strategyId = item.strategy;
+    if (item.status === 'ACTIVE') {
+      await unregisterStrategy(strategyId);
+      setLiveData(prev => prev.map(p => p.strategy === strategyId ? { ...p, status: 'PAUSED' } : p));
+    } else {
+      // parse name from strategy id (format COIN_NAME)
+      const parts = strategyId.split('_');
+      const coin = item.coin || parts[0];
+      const name = parts.slice(1).join('_') || parts[1] || 'SMA_Crossover';
+      await registerStrategy(name, coin);
+      setLiveData(prev => prev.map(p => p.strategy === strategyId ? { ...p, status: 'ACTIVE' } : p));
+    }
+  };
+
+  const exportStrategyTrades = async (item:any) => {
+    try {
+      const res = await fetchTrades(item.strategy, 1000);
+      const trades = res?.trades || res || [];
+      if (!trades.length) return;
+      const headers = Object.keys(trades[0]);
+      const csv = [headers.join(',')].concat(trades.map((t:any)=> headers.map(h=> JSON.stringify(t[h] ?? '')).join(','))).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${item.strategy}_trades.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { console.error(e); }
+  };
+
   return (
     <div className="space-y-6">
       {/* Hero Metrics */}
@@ -144,16 +269,16 @@ export function LiveTradingDashboard() {
               <div className="flex items-center justify-between">
                 <span className="text-sm">Latency</span>
                 <span className={`monospace ${latency < 5 ? 'text-[#00ff41]' : 'text-yellow-500'}`}>
-                  {latency}ms
+                  {latency.toFixed(1)}ms
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm">Processes</span>
-                <span className="text-[#00ff41]">4/4 Running</span>
+                <span className="text-[#00ff41]">{processCount}/4 Running</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm">Queue</span>
-                <span className="text-[#808080]">127 msgs</span>
+                <span className="text-[#808080]">{queueSize} msgs</span>
               </div>
             </div>
           </div>
@@ -223,9 +348,9 @@ export function LiveTradingDashboard() {
                     <td className="py-3 px-4 text-right text-[#808080]">{item.trades24h}</td>
                     <td className="py-3 px-4 text-right">
                       <div className="flex gap-2 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button className="p-1 hover:text-[#00d4ff]"><Eye className="w-4 h-4" /></button>
-                        <button className="p-1 hover:text-yellow-500"><Pause className="w-4 h-4" /></button>
-                        <button className="p-1 hover:text-[#ff0055]"><Square className="w-4 h-4" /></button>
+                        <button onClick={() => openStrategyDetails(item.strategy)} className="p-1 hover:text-[#00d4ff]" title="Details"><Eye className="w-4 h-4" /></button>
+                        <button onClick={() => toggleStrategy(item)} className="p-1 hover:text-yellow-500" title={item.status === 'ACTIVE' ? 'Pause' : 'Start'}><Pause className="w-4 h-4" /></button>
+                        <button onClick={() => exportStrategyTrades(item)} className="p-1 hover:text-[#ff0055]" title="Export Trades"><Square className="w-4 h-4" /></button>
                       </div>
                     </td>
                   </tr>
@@ -288,16 +413,18 @@ export function LiveTradingDashboard() {
       
       {/* Action Buttons */}
       <div className="flex flex-wrap gap-3">
-        <Button variant="primary" size="lg">
+        <Button variant="primary" size="lg" onClick={handleStartAll} disabled={loadingStart}>
           <TrendingUp className="w-5 h-5 mr-2" />
-          Start All Strategies
+          {loadingStart ? 'Starting...' : 'Start All Strategies'}
         </Button>
-        <Button variant="warning" size="lg">
+        <Button variant="warning" size="lg" onClick={handlePauseAll} disabled={loadingPause}>
           <Pause className="w-5 h-5 mr-2" />
-          Pause All
+          {loadingPause ? 'Pausing...' : 'Pause All'}
         </Button>
         <Button variant="secondary" size="lg">Configure Strategy</Button>
-        <Button variant="outline" size="lg">Export Trades CSV</Button>
+        <Button variant="outline" size="lg" onClick={handleExportTrades} disabled={exporting}>
+          {exporting ? 'Exporting...' : 'Export Trades CSV'}
+        </Button>
       </div>
     </div>
   );

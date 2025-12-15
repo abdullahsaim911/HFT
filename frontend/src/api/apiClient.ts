@@ -145,3 +145,28 @@ export async function getCopilotActiveAlerts() {
   }
 }
 
+export async function getStrategyMetrics(strategyId: string) {
+  try {
+    const res = await fetch(`${API_ROOT}/metrics/${strategyId}`);
+    if (!res.ok) throw new Error('Failed to fetch strategy metrics');
+    return await res.json();
+  } catch (err) {
+    console.error('getStrategyMetrics error', err);
+    return null;
+  }
+}
+
+export async function fetchTrades(strategyId?: string, limit: number = 100) {
+  try {
+    const url = new URL(`${API_ROOT}/trades`);
+    if (strategyId) url.searchParams.set('strategy_id', strategyId);
+    url.searchParams.set('limit', String(limit));
+    const res = await fetch(url.toString());
+    if (!res.ok) throw new Error('Failed to fetch trades');
+    return await res.json();
+  } catch (err) {
+    console.error('fetchTrades error', err);
+    return null;
+  }
+}
+
